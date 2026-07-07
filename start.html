@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="0; url=index.html">
+    <title>手势控制宇宙探索器</title>
+    <script>window.location.replace('index.html');</script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; font-family: 'Microsoft YaHei', sans-serif; color: #fff; }
+        #universe-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #output_canvas {
+            position: fixed; bottom: 20px; right: 20px;
+            width: 320px; height: 240px;
+            border: 2px solid rgba(0, 255, 255, 0.5);
+            border-radius: 12px; z-index: 100;
+        }
+        #webcam { display: none; }
+        #status-panel {
+            position: fixed; top: 20px; left: 20px; width: 260px;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 12px; padding: 20px; z-index: 100;
+        }
+        #status-panel h2 { text-align: center; margin-bottom: 15px; color: #0ff; font-size: 18px; }
+        .status-group { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .status-label { font-size: 11px; color: #888; margin-bottom: 3px; }
+        .status-value { font-size: 14px; color: #0ff; font-weight: bold; }
+        .status-value.active { color: #0f0; }
+        .status-value.warning { color: #ff0; }
+        .control-tips { margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(0,255,255,0.3); }
+        .control-tips h3 { font-size: 13px; color: #0ff; margin-bottom: 8px; }
+        .control-tips ul { list-style: none; font-size: 11px; line-height: 1.6; color: #aaa; }
+        #loading-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(ellipse at center, #0a0a2e 0%, #000 100%);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 1000; transition: opacity 0.5s;
+        }
+        #loading-screen.hidden { opacity: 0; pointer-events: none; }
+        .loading-spinner {
+            width: 50px; height: 50px;
+            border: 3px solid rgba(0,255,255,0.2);
+            border-top-color: #0ff; border-radius: 50%;
+            margin: 0 auto 15px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-content { text-align: center; }
+        .loading-content h2 { color: #0ff; font-size: 20px; margin-bottom: 8px; }
+        .loading-content p { color: #888; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div id="universe-container"></div>
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="output_canvas"></canvas>
+
+    <div id="status-panel">
+        <h2>🌌 宇宙探索器</h2>
+        <div class="status-group">
+            <div class="status-label">摄像头状态</div>
+            <div id="camera-status" class="status-value">正在请求权限...</div>
+        </div>
+        <div class="status-group">
+            <div class="status-label">手部识别</div>
+            <div id="hand-status" class="status-value">未识别到手</div>
+        </div>
+        <div class="status-group">
+            <div class="status-label">当前手势</div>
+            <div id="gesture-status" class="status-value">无</div>
+        </div>
+        <div class="status-group">
+            <div class="status-label">缩放等级</div>
+            <div id="zoom-level" class="status-value">1.0x</div>
+        </div>
+        <div class="status-group">
+            <div class="status-label">当前帧率</div>
+            <div id="fps-counter" class="status-value">0 FPS</div>
+        </div>
+        <div class="control-tips">
+            <h3>🎮 控制说明</h3>
+            <ul>
+                <li>👆 任意手指指向上 → 持续向上</li>
+                <li>👇 任意手指指向下 → 持续向下</li>
+                <li>👈 任意手指指向左 → 持续向左</li>
+                <li>👉 任意手指指向右 → 持续向右</li>
+                <li>🖐️ 五指张开 → 持续放大</li>
+                <li>✊ 握拳 → 持续缩小</li>
+            </ul>
+        </div>
+    </div>
+
+    <div id="loading-screen">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <h2>正在初始化宇宙探索器</h2>
+            <p id="loading-message">正在加载...</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+    <script>
+    // ==================== 宇宙场景 ====================
+    class UniverseScene {
+        constructor(container) {
+            this.container = container;
+            this.scene = new THREE.Scene();
+            this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+            this.camera.position.set(0, 0, 500);
+            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.renderer.setPixelRatio(window.devicePixelRatio);
+            this.renderer.setClearColor(0x000005, 1);
+            this.container.appendChild(this.renderer.domElement);
+            this.scene.add(new THREE.AmbientLight(0x222244, 0.5));
+            this.rotX = 0;
+            this.rotY = 0;
+            this.zoomLevel = 1.0;
+            this.isRunning = false;
+            this.createStars();
+            this.createGalaxy();
+            this.createParticles();
+        }
+
+        createStars() {
+            const count = 5000;
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const col = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const r = 2000 + Math.random() * 3000;
+                const t = Math.random() * Math.PI * 2;
+                const p = Math.acos(2 * Math.random() - 1);
+                pos[i*3] = r * Math.sin(p) * Math.cos(t);
+                pos[i*3+1] = r * Math.sin(p) * Math.sin(t);
+                pos[i*3+2] = r * Math.cos(p);
+                const v = Math.random();
+                if (v < 0.6) { col[i*3]=1; col[i*3+1]=1; col[i*3+2]=1; }
+                else if (v < 0.8) { col[i*3]=0.5; col[i*3+1]=0.7; col[i*3+2]=1; }
+                else { col[i*3]=1; col[i*3+1]=0.9; col[i*3+2]=0.5; }
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            this.stars = new THREE.Points(geo, new THREE.PointsMaterial({ size: 2, vertexColors: true, transparent: true, opacity: 0.9 }));
+            this.scene.add(this.stars);
+        }
+
+        createGalaxy() {
+            const count = 8000;
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const col = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const arm = Math.floor(Math.random() * 4);
+                const angle = (arm / 4) * Math.PI * 2;
+                const dist = 200 + Math.random() * 600;
+                const spiral = angle + (dist / 800) * Math.PI * 2;
+                const spread = Math.random() * 0.5 * dist;
+                pos[i*3] = dist * Math.cos(spiral) + spread * Math.cos(spiral + Math.PI/2);
+                pos[i*3+2] = dist * Math.sin(spiral) + spread * Math.sin(spiral + Math.PI/2);
+                pos[i*3+1] = (Math.random() - 0.5) * 50;
+                const d = dist / 800;
+                if (d < 0.3) { col[i*3]=1; col[i*3+1]=0.8-d; col[i*3+2]=0.3; }
+                else { col[i*3]=0.7-d*0.5; col[i*3+1]=0.8-d*0.3; col[i*3+2]=1; }
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            this.galaxy = new THREE.Points(geo, new THREE.PointsMaterial({ size: 3, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }));
+            this.galaxy.rotation.x = Math.PI * 0.1;
+            this.scene.add(this.galaxy);
+        }
+
+        createParticles() {
+            const count = 3000;
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const col = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                pos[i*3] = (Math.random()-0.5) * 5000;
+                pos[i*3+1] = (Math.random()-0.5) * 5000;
+                pos[i*3+2] = (Math.random()-0.5) * 5000 - 2000;
+                const v = 0.3 + Math.random() * 0.7;
+                col[i*3] = 0.5 * v; col[i*3+1] = 0.6 * v; col[i*3+2] = 1 * v;
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            this.particles = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.5, vertexColors: true, transparent: true, opacity: 0.6 }));
+            this.scene.add(this.particles);
+        }
+
+        addRotation(dx, dy) {
+            this.rotX += dx;
+            this.rotY += dy;
+            this.rotX = Math.max(-3, Math.min(3, this.rotX));
+            this.rotY = Math.max(-3, Math.min(3, this.rotY));
+        }
+
+        setZoom(level) { this.zoomLevel = level; }
+
+        animate() {
+            if (!this.isRunning) return;
+            requestAnimationFrame(() => this.animate());
+            this.camera.position.x = this.rotX * 300;
+            this.camera.position.y = this.rotY * 300;
+            const targetZ = 500 / this.zoomLevel;
+            this.camera.position.z += (targetZ - this.camera.position.z) * 0.1;
+            this.camera.lookAt(0, 0, 0);
+            this.renderer.render(this.scene, this.camera);
+        }
+
+        start() { this.isRunning = true; this.animate(); }
+    }
+
+    // ==================== 主程序 ====================
+    const universeContainer = document.getElementById('universe-container');
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const loadingScreen = document.getElementById('loading-screen');
+    const loadingMessage = document.getElementById('loading-message');
+    const cameraStatus = document.getElementById('camera-status');
+    const handStatus = document.getElementById('hand-status');
+    const gestureStatus = document.getElementById('gesture-status');
+    const zoomLevelDisplay = document.getElementById('zoom-level');
+    const fpsCounter = document.getElementById('fps-counter');
+
+    let universeScene = null;
+    let isHandDetected = false;
+    let currentZoom = 1.0;
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+
+    async function init() {
+        try {
+            updateLoading('正在创建 3D 宇宙场景...');
+            universeScene = new UniverseScene(universeContainer);
+            await delay(300);
+            updateLoading('正在加载手部识别模型...');
+            await initMediaPipe();
+        } catch (error) {
+            console.error('初始化失败:', error);
+            updateLoading('失败: ' + error.message);
+            setTimeout(() => loadingScreen.classList.add('hidden'), 2000);
+        }
+    }
+
+    async function initMediaPipe() {
+        canvasElement.width = 640;
+        canvasElement.height = 480;
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onHandResults);
+
+        updateLoading('正在请求摄像头权限...');
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480
+        });
+
+        await camera.start();
+
+        cameraStatus.textContent = '已连接';
+        cameraStatus.classList.add('active');
+        universeScene.start();
+        updateFps();
+        loadingScreen.classList.add('hidden');
+    }
+
+    function onHandResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: 'rgba(255,255,255,0.7)', lineWidth: 2 });
+            drawLandmarks(canvasCtx, landmarks, { color: '#00FFFF', lineWidth: 1, radius: 3 });
+
+            [4, 8, 12, 16, 20].forEach(idx => {
+                const p = landmarks[idx];
+                canvasCtx.beginPath();
+                canvasCtx.arc(p.x * canvasElement.width, p.y * canvasElement.height, 6, 0, Math.PI * 2);
+                canvasCtx.fillStyle = '#00AAFF';
+                canvasCtx.shadowColor = '#00AAFF';
+                canvasCtx.shadowBlur = 10;
+                canvasCtx.fill();
+                canvasCtx.shadowBlur = 0;
+            });
+
+            if (!isHandDetected) {
+                isHandDetected = true;
+                handStatus.textContent = '已识别到手';
+                handStatus.classList.add('active');
+                handStatus.classList.remove('warning');
+            }
+
+            processGesture(landmarks);
+        } else {
+            if (isHandDetected) {
+                isHandDetected = false;
+                handStatus.textContent = '未识别到手';
+                handStatus.classList.remove('active');
+                handStatus.classList.add('warning');
+                gestureStatus.textContent = '无';
+            }
+        }
+
+        canvasCtx.restore();
+    }
+
+    function processGesture(landmarks) {
+        const wrist = landmarks[0];
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+
+        // ========== 缩放控制：五指张开/握拳 ==========
+        const thumbExtended = thumbTip.x < landmarks[3].x;
+        const indexExtended = indexTip.y < landmarks[6].y;
+        const middleExtended = middleTip.y < landmarks[10].y;
+        const ringExtended = ringTip.y < landmarks[14].y;
+        const pinkyExtended = pinkyTip.y < landmarks[18].y;
+
+        const extendedCount = [thumbExtended, indexExtended, middleExtended, ringExtended, pinkyExtended].filter(Boolean).length;
+
+        // 五指全部张开 -> 持续放大
+        if (extendedCount >= 5) {
+            currentZoom = Math.min(3.0, currentZoom + 0.02);
+            universeScene.setZoom(currentZoom);
+            gestureStatus.textContent = '🖐️ 放大中';
+            zoomLevelDisplay.textContent = currentZoom.toFixed(1) + 'x';
+            return;
+        }
+
+        // 握拳 -> 持续缩小
+        if (extendedCount <= 1) {
+            currentZoom = Math.max(0.3, currentZoom - 0.02);
+            universeScene.setZoom(currentZoom);
+            gestureStatus.textContent = '✊ 缩小中';
+            zoomLevelDisplay.textContent = currentZoom.toFixed(1) + 'x';
+            return;
+        }
+
+        // ========== 方向控制：检测任意手指指向 ==========
+        // 手指尖端索引（排除拇指）
+        const fingertips = [
+            { tip: indexTip, base: landmarks[5], name: '食指' },
+            { tip: middleTip, base: landmarks[9], name: '中指' },
+            { tip: ringTip, base: landmarks[13], name: '无名指' },
+            { tip: pinkyTip, base: landmarks[17], name: '小指' }
+        ];
+
+        // 手掌中心
+        const palmCenter = {
+            x: (wrist.x + landmarks[9].x) / 2,
+            y: (wrist.y + landmarks[9].y) / 2
+        };
+
+        const threshold = 0.08;
+        const speed = 0.015;
+        let direction = null;
+
+        // 检测每个伸直的手指的指向
+        for (const finger of fingertips) {
+            // 计算指尖相对于手掌中心的方向
+            const dirX = finger.tip.x - palmCenter.x;
+            const dirY = finger.tip.y - palmCenter.y;
+
+            // 计算手指长度（指尖到手掌中心的距离）
+            const length = Math.sqrt(dirX * dirX + dirY * dirY);
+
+            // 只有手指伸得够长才认为是在"指向"
+            if (length > 0.1) {
+                // 判断指向方向
+                if (Math.abs(dirX) > Math.abs(dirY)) {
+                    // 水平方向
+                    if (dirX < -threshold) {
+                        direction = 'left';
+                    } else if (dirX > threshold) {
+                        direction = 'right';
+                    }
+                } else {
+                    // 垂直方向
+                    if (dirY < -threshold) {
+                        direction = 'up';
+                    } else if (dirY > threshold) {
+                        direction = 'down';
+                    }
+                }
+
+                if (direction) break; // 找到一个方向就够了
+            }
+        }
+
+        // 应用方向
+        switch (direction) {
+            case 'left':
+                universeScene.addRotation(-speed, 0);
+                gestureStatus.textContent = '👈 向左';
+                break;
+            case 'right':
+                universeScene.addRotation(speed, 0);
+                gestureStatus.textContent = '👉 向右';
+                break;
+            case 'up':
+                universeScene.addRotation(0, -speed);
+                gestureStatus.textContent = '👆 向上';
+                break;
+            case 'down':
+                universeScene.addRotation(0, speed);
+                gestureStatus.textContent = '👇 向下';
+                break;
+            default:
+                gestureStatus.textContent = '✋ 静止';
+                break;
+        }
+
+        zoomLevelDisplay.textContent = currentZoom.toFixed(1) + 'x';
+    }
+
+    function updateLoading(msg) {
+        if (loadingMessage) loadingMessage.textContent = msg;
+    }
+
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function updateFps() {
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsTime >= 1000) {
+            fpsCounter.textContent = Math.round(frameCount * 1000 / (now - lastFpsTime)) + ' FPS';
+            frameCount = 0;
+            lastFpsTime = now;
+        }
+        requestAnimationFrame(updateFps);
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+
+    window.addEventListener('resize', () => {
+        if (universeScene) {
+            universeScene.camera.aspect = window.innerWidth / window.innerHeight;
+            universeScene.camera.updateProjectionMatrix();
+            universeScene.renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    });
+    </script>
+</body>
+</html>
