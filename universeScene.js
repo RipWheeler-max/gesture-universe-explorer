@@ -501,8 +501,8 @@ class UniverseScene {
 
     addManualRotation(yaw, pitch, roll) {
         this.sceneRoot.rotation.y += yaw;
-        this.sceneRoot.rotation.x = THREE.MathUtils.clamp(this.sceneRoot.rotation.x + pitch, -1.15, 1.15);
-        this.sceneRoot.rotation.z = THREE.MathUtils.clamp(this.sceneRoot.rotation.z + roll, -0.85, 0.85);
+        this.sceneRoot.rotation.x += pitch;
+        this.sceneRoot.rotation.z += roll;
     }
 
     animate() {
@@ -515,7 +515,6 @@ class UniverseScene {
         // 手指方向会持续推动整个场景旋转；手停住时速度也会马上停住。
         this.sceneRoot.rotation.y += this.rotationSpeed.x * delta * 0.42;
         this.sceneRoot.rotation.x += this.rotationSpeed.y * delta * 0.28;
-        this.sceneRoot.rotation.x = THREE.MathUtils.clamp(this.sceneRoot.rotation.x, -1.15, 1.15);
         this.sceneRoot.rotation.z += (0 - this.sceneRoot.rotation.z) * 0.006;
         this.panCurrent.x += (this.panTarget.x - this.panCurrent.x) * 0.38;
         this.panCurrent.y += (this.panTarget.y - this.panCurrent.y) * 0.38;

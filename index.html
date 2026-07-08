@@ -51,7 +51,7 @@
 
         #view-panel {
             position: fixed;
-            left: 20px; bottom: 20px;
+            left: 20px; bottom: 35px;
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
@@ -102,6 +102,17 @@
         .loading-content h2 { color: #86f8ff; font-size: 20px; margin-bottom: 8px; }
         .loading-content p { color: #9ea8bd; font-size: 13px; }
 
+        #version-number {
+            position: fixed;
+            left: 20px;
+            bottom: 10px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.4);
+            z-index: 100;
+            pointer-events: none;
+            font-family: monospace;
+        }
+
         @media (max-width: 700px) {
             #status-panel {
                 top: 16px; left: 16px;
@@ -128,6 +139,8 @@
 
     <video id="webcam" autoplay playsinline webkit-playsinline muted></video>
     <canvas id="output_canvas"></canvas>
+
+    <div id="version-number">v0.0.6</div>
 
     <div id="status-panel">
         <h2>宇宙探索器</h2>
